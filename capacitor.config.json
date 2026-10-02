@@ -4,6 +4,14 @@
   "webDir": "www",
   "server": {
     "androidScheme": "https",
-    "allowNavigation": ["accounts.spotify.com", "*.spotify.com"]
+    "allowNavigation": [
+      "accounts.spotify.com",
+      "*.spotify.com"
+    ]
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
   }
 }
