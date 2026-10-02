@@ -27,6 +27,58 @@ jobs:
           s=s.replace('</activity>',f+'</activity>',1)
           open(p,'w').write(s)
           PY
+      - name: Add native volume plugin
+        run: |
+          D=android/app/src/main/java/com/beatplayer/app
+          cat > $D/VolumePlugin.java <<'EOF'
+          package com.beatplayer.app;
+
+          import android.content.Context;
+          import android.media.AudioManager;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "Volume")
+          public class VolumePlugin extends Plugin {
+            private AudioManager am() {
+              return (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+            }
+            @PluginMethod
+            public void get(PluginCall call) {
+              AudioManager a = am();
+              int max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+              int cur = a.getStreamVolume(AudioManager.STREAM_MUSIC);
+              JSObject r = new JSObject();
+              r.put("value", (int) Math.round(cur * 100.0 / max));
+              call.resolve(r);
+            }
+            @PluginMethod
+            public void set(PluginCall call) {
+              Integer v = call.getInt("value", 50);
+              AudioManager a = am();
+              int max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+              a.setStreamVolume(AudioManager.STREAM_MUSIC, (int) Math.round(v * max / 100.0), 0);
+              call.resolve();
+            }
+          }
+          EOF
+          cat > $D/MainActivity.java <<'EOF'
+          package com.beatplayer.app;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              registerPlugin(VolumePlugin.class);
+              super.onCreate(savedInstanceState);
+            }
+          }
+          EOF
       - run: npx cap sync android
       - run: chmod +x android/gradlew && cd android && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4

@@ -247,19 +247,28 @@ showOff();
 $('lE').onclick=()=>{lyricOff+=250;store.set('lyroff',lyricOff);showOff()};
 $('lL').onclick=()=>{lyricOff-=250;store.set('lyroff',lyricOff);showOff()};
 ['touchstart','wheel','pointerdown'].forEach(ev=>$('lyrics').addEventListener(ev,()=>{userScrollUntil=performance.now()+5000},{passive:true}));
-$('lyrics').addEventListener('click',e=>{const el=e.target.closest('p[data-i]');if(!el)return;const l=lyricLines[+el.dataset.i];if(l){S.pos=l.t;S.at=performance.now();cmd('/me/player/seek?position_ms='+Math.round(l.t))}});
+$('lyrics').addEventListener('click',e=>{const el=e.target.closest('p[data-i]');if(!el)return;const l=lyricLines[+el.dataset.i];if(l){applyState({pos:l.t,paused:false});cmd('/me/player/seek?position_ms='+Math.round(l.t))}});
 
 /* ---------- Controls ---------- */
-async function cmd(path,method='PUT'){ const r=await api(path+(path.includes('?')?'&':'?')+(deviceId?'device_id='+deviceId:''),method); if(r&&r.error) say('No active Spotify device. Tap play or open Spotify somewhere first.'); setTimeout(poll,350); }
+let holdUntil=0,volHold=0;
+async function cmd(path,method='PUT',quick=false){
+  holdUntil=quick?0:performance.now()+1800;
+  try{ const r=await api(path+(path.includes('?')?'&':'?')+(deviceId?'device_id='+deviceId:''),method); if(r&&r.error) say('No active Spotify device. Start a song in the Spotify app first.'); }
+  catch(e){ say(e.message) }
+  if(quick){ setTimeout(poll,400); setTimeout(poll,1200); } else setTimeout(poll,1900);
+}
 $('play').onclick=async()=>{
   if(player&&deviceId&&!S.track){await api('/me/player','PUT',{device_ids:[deviceId],play:true});return}
-  S.paused?cmd('/me/player/play'):cmd('/me/player/pause');
+  const wasPaused=S.paused; applyState({pos:nowPos(),paused:!wasPaused});
+  wasPaused?cmd('/me/player/play'):cmd('/me/player/pause');
 };
-$('next').onclick=()=>cmd('/me/player/next','POST');
-$('prev').onclick=()=>nowPos()>3000?cmd('/me/player/seek?position_ms=0'):cmd('/me/player/previous','POST');
-$('shuf').onclick=()=>cmd('/me/player/shuffle?state='+!S.shuffle);
-$('rep').onclick=()=>cmd('/me/player/repeat?state='+['context','track','off'][S.repeat]);
-$('vol').oninput=e=>{clearTimeout($('vol').t);$('vol').style.setProperty('--p',e.target.value+'%');$('vol').t=setTimeout(()=>cmd('/me/player/volume?volume_percent='+e.target.value),150)};
+$('next').onclick=()=>cmd('/me/player/next','POST',true);
+$('prev').onclick=()=>{ if(nowPos()>3000){applyState({pos:0});cmd('/me/player/seek?position_ms=0')} else cmd('/me/player/previous','POST',true) };
+$('shuf').onclick=()=>{const v=!S.shuffle;applyState({pos:nowPos(),shuffle:v});cmd('/me/player/shuffle?state='+v)};
+$('rep').onclick=()=>{const n=(S.repeat+1)%3;applyState({pos:nowPos(),repeat:n});cmd('/me/player/repeat?state='+['off','context','track'][n])};
+$('vol').oninput=e=>{
+  if(NATIVE&&Capacitor.Plugins.Volume){const v=+e.target.value;e.target.style.setProperty('--p',v+'%');volHold=performance.now()+1500;Capacitor.Plugins.Volume.set({value:v});return}
+  clearTimeout($('vol').t);$('vol').style.setProperty('--p',e.target.value+'%');$('vol').t=setTimeout(()=>cmd('/me/player/volume?volume_percent='+e.target.value),150)};
 $('seek').addEventListener('input',e=>{dragging=true;const ms=e.target.value/1000*S.dur;$('cur').textContent=fmt(ms);e.target.style.setProperty('--p',e.target.value/10+'%')});
 $('seek').addEventListener('change',e=>{const ms=Math.round(e.target.value/1000*S.dur);S.pos=ms;S.at=performance.now();dragging=false;cmd('/me/player/seek?position_ms='+ms)});
 $('like').onclick=async()=>{ if(!S.track)return; const liked=$('like').textContent.includes('♥');
@@ -272,13 +281,19 @@ async function poll(){
     const t0=performance.now();
     const r=await api('/me/player');
     if(!r||r.error||!r.item){ return; }
+    if(performance.now()<holdUntil) return;
     let pos=r.progress_ms+(r.is_playing?(performance.now()-t0)/2:0);
     if(S.track&&S.track.id===r.item.id&&S.paused===!r.is_playing&&Math.abs(pos-nowPos())<700) pos=nowPos();
     applyState({track:r.item,pos,dur:r.item.duration_ms,paused:!r.is_playing,shuffle:r.shuffle_state,repeat:['off','context','track'].indexOf(r.repeat_state)});
-    if(r.device&&!dragging&&document.activeElement!==$('vol')) $('vol').value=r.device.volume_percent??60;
+    if(!NATIVE&&r.device&&!dragging&&document.activeElement!==$('vol')) $('vol').value=r.device.volume_percent??60;
   }catch(e){say(e.message)}
 }
 
+/* phone volume stays in sync with the hardware buttons */
+if(NATIVE&&Capacitor.Plugins.Volume){
+  const syncVol=()=>{ if(performance.now()<volHold) return; Capacitor.Plugins.Volume.get().then(r=>{$('vol').value=r.value;$('vol').style.setProperty('--p',r.value+'%')}).catch(()=>{}) };
+  syncVol(); setInterval(syncVol,1500);
+}
 /* ---------- Boot ---------- */
 function startPlayer(){
   window.onSpotifyWebPlaybackSDKReady=()=>{
@@ -297,7 +312,7 @@ function startApp(){
   if(started) return; started=true;
   $('login').style.display='none';$('app').style.display='grid';
   if(NATIVE) say('Remote mode: start a song in the Spotify app and it shows up here.'); else startPlayer();
-  poll(); setInterval(poll,3000); requestAnimationFrame(frame);
+  poll(); setInterval(poll,2000); requestAnimationFrame(frame);
 }
 if(NATIVE&&Capacitor.Plugins.App){
   Capacitor.Plugins.App.addListener('appUrlOpen',async ev=>{
