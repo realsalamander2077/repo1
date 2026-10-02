@@ -100,9 +100,18 @@ async function login(){
   const url='https://accounts.spotify.com/authorize?'+new URLSearchParams({client_id:cid,response_type:'code',redirect_uri:REDIRECT,scope:SCOPES,code_challenge_method:'S256',code_challenge:challenge});
   if(NATIVE&&Capacitor.Plugins.Browser) Capacitor.Plugins.Browser.open({url}); else location.href=url;
 }
+async function nfetch(url,o){
+  const h=o.headers||{}; let data;
+  if(o.body){ try{data=JSON.parse(o.body)}catch{data=o.body} }
+  const res=await Capacitor.Plugins.CapacitorHttp.request({url,method:o.method||'GET',headers:h,data,responseType:'text'});
+  const txt=typeof res.data==='string'?res.data:JSON.stringify(res.data??'');
+  return {ok:res.status>=200&&res.status<300,status:res.status,text:async()=>txt,json:async()=>JSON.parse(txt)};
+}
 async function rfetch(url,opts,tries=8){
+  const useNative=opts&&opts.native&&NATIVE&&Capacitor.Plugins.CapacitorHttp;
+  if(opts&&opts.native){opts={...opts};delete opts.native}
   for(let i=0;;i++){
-    try{ return await fetch(url,opts) }
+    try{ return useNative?await nfetch(url,opts):await fetch(url,opts) }
     catch(e){ if(i>=tries-1) throw new Error('No connection to Spotify ('+(e.message||e)+'). Check your internet and try again.'); await new Promise(r=>setTimeout(r,1500)) }
   }
 }
@@ -118,9 +127,9 @@ async function getToken(){
 }
 async function api(path,method='GET',body){
   const t=await getToken();
-  const r=await rfetch('https://api.spotify.com/v1'+path,{method,headers:{Authorization:'Bearer '+t,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+  const r=await rfetch('https://api.spotify.com/v1'+path,{native:true,method,headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},body:body?JSON.stringify(body):(method!=='GET'?'{}':undefined)});
   if(r.status===204||r.status===202) return null;
-  if(!r.ok){ if(r.status===404||r.status===403) return {error:r.status}; throw new Error('Spotify error '+r.status); }
+  if(!r.ok){ if(r.status===404||r.status===403) return {error:r.status}; throw new Error('Spotify error '+r.status+' on '+method+' '+path.split('?')[0]); }
   const txt=await r.text(); return txt?JSON.parse(txt):null;
 }
 $('go').onclick=login; $('cid').value=store.get('cid')||'';
@@ -167,8 +176,8 @@ async function loadLyrics(tr){
   const box=$('lyrics'); box.className=''; box.innerHTML='<p>Looking for lyrics…</p>'; lyricLines=[]; plain=false;
   try{
     const q=new URLSearchParams({track_name:tr.name,artist_name:tr.artists[0].name,album_name:tr.album.name,duration:Math.round(tr.duration_ms/1000)});
-    let r=await fetch('https://lrclib.net/api/get?'+q); 
-    if(!r.ok){ r=await fetch('https://lrclib.net/api/search?'+new URLSearchParams({track_name:tr.name,artist_name:tr.artists[0].name})); }
+    let r=await rfetch('https://lrclib.net/api/get?'+q,{native:true},3); 
+    if(!r.ok){ r=await rfetch('https://lrclib.net/api/search?'+new URLSearchParams({track_name:tr.name,artist_name:tr.artists[0].name}),{native:true},3); }
     let j=await r.json(); if(Array.isArray(j)) j=j.find(x=>x.syncedLyrics)||j[0];
     if(tr.id!==lastTrackId) return;
     if(j&&j.syncedLyrics){
@@ -177,7 +186,7 @@ async function loadLyrics(tr){
     }else if(j&&j.plainLyrics){
       plain=true;box.className='plain';box.innerHTML=j.plainLyrics.split('\n').map(l=>`<p>${l.replace(/</g,'&lt;')||'&nbsp;'}</p>`).join('');
     }else box.innerHTML='<p>No lyrics found for this song.</p>';
-  }catch{ box.innerHTML='<p>Lyrics could not be loaded.</p>'; }
+  }catch(e){ box.innerHTML='<p>Lyrics could not be loaded: '+String(e.message||e).replace(/</g,'&lt;')+'</p>'; }
 }
 
 /* Beat data: Spotify's audio-analysis is blocked for newer apps, so we try it
