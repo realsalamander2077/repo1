@@ -100,8 +100,14 @@ async function login(){
   const url='https://accounts.spotify.com/authorize?'+new URLSearchParams({client_id:cid,response_type:'code',redirect_uri:REDIRECT,scope:SCOPES,code_challenge_method:'S256',code_challenge:challenge});
   if(NATIVE&&Capacitor.Plugins.Browser) Capacitor.Plugins.Browser.open({url}); else location.href=url;
 }
+async function rfetch(url,opts,tries=8){
+  for(let i=0;;i++){
+    try{ return await fetch(url,opts) }
+    catch(e){ if(i>=tries-1) throw new Error('No connection to Spotify ('+(e.message||e)+'). Check your internet and try again.'); await new Promise(r=>setTimeout(r,1500)) }
+  }
+}
 async function tokenReq(params){
-  const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:store.get('cid'),...params})});
+  const r=await rfetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:store.get('cid'),...params})});
   const j=await r.json(); if(!j.access_token) throw new Error(j.error_description||'Login failed');
   store.set('access',j.access_token); if(j.refresh_token) store.set('refresh',j.refresh_token);
   store.set('exp',Date.now()+j.expires_in*1000-60000); return j.access_token;
@@ -112,7 +118,7 @@ async function getToken(){
 }
 async function api(path,method='GET',body){
   const t=await getToken();
-  const r=await fetch('https://api.spotify.com/v1'+path,{method,headers:{Authorization:'Bearer '+t,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+  const r=await rfetch('https://api.spotify.com/v1'+path,{method,headers:{Authorization:'Bearer '+t,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   if(r.status===204||r.status===202) return null;
   if(!r.ok){ if(r.status===404||r.status===403) return {error:r.status}; throw new Error('Spotify error '+r.status); }
   const txt=await r.text(); return txt?JSON.parse(txt):null;
@@ -273,6 +279,8 @@ if(NATIVE&&Capacitor.Plugins.App){
   Capacitor.Plugins.App.addListener('appUrlOpen',async ev=>{
     try{
       const u=new URL(ev.url.replace('beatplayer://','https://cb.invalid/'));
+      $('lmsg').textContent='Finishing login…';
+      await new Promise(r=>setTimeout(r,1200));
       const code=u.searchParams.get('code');
       if(!code){ $('lmsg').textContent='Spotify said: '+(u.searchParams.get('error')||'login cancelled'); return; }
       await tokenReq({grant_type:'authorization_code',code,redirect_uri:REDIRECT,code_verifier:store.get('verifier')});
