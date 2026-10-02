@@ -44,7 +44,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
 #play svg{width:30px;height:30px}
 .small{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim);flex-wrap:wrap}
 .small button{padding:8px 14px;border:1px solid #fff3;border-radius:999px;color:var(--fg)}
-#msg{font-size:13px;color:var(--dim);min-height:18px}
+#msg,#lat,#bpm{display:none}
 @media(prefers-reduced-motion:reduce){#art{transform:none}}
 </style>
 </head>
@@ -78,7 +78,6 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
       <span>Volume</span><input type="range" id="vol" min="0" max="100" value="60" style="max-width:140px" aria-label="Volume">
       <button id="like" aria-label="Save to Liked Songs">♡ Like</button>
       <button id="tap" title="Tap along if the pulse is off">Tap tempo</button>
-      <span>Lyrics</span><button id="lE">Earlier</button><span id="lo"></span><button id="lL">Later</button>
       <span id="bpm"></span><span id="lat" style="opacity:.6"></span>
     </div>
     <div id="msg"></div>
@@ -137,17 +136,17 @@ async function api(path,method='GET',body){
   const r=await rfetch('https://api.spotify.com/v1'+path,{native:true,method,headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},body:body?JSON.stringify(body):(method!=='GET'?'{}':undefined)});
   if(r.status===204||r.status===202) return null;
   if(!r.ok){ if(r.status===404||r.status===403) return {error:r.status}; throw new Error('Spotify error '+r.status+' on '+method+' '+path.split('?')[0]); }
-  const txt=await r.text(); return txt?JSON.parse(txt):null;
+  const txt=await r.text(); try{ return txt?JSON.parse(txt):null }catch{ return null }
 }
 $('go').onclick=login; $('cid').value=store.get('cid')||'';
 
 /* ---------- State ---------- */
-let lyricOff=store.get('lyroff2')!==null?+store.get('lyroff2'):-150,userScrollUntil=0;
+let lyricOff=-150,userScrollUntil=0;
 let S={track:null,pos:0,at:0,dur:1,paused:true,shuffle:false,repeat:0};
 let deviceId=null,player=null,lyricLines=[],plain=false,lastTrackId=null,beats=null,bpm=null,dragging=false;
 const fmt=ms=>{ms=Math.max(0,ms|0);const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
 const nowPos=()=>S.paused?S.pos:Math.min(S.dur,S.pos+(performance.now()-S.at));
-const say=m=>$('msg').textContent=m||'';
+const say=m=>{ if(m) console.log(m) };
 
 function applyState(n){
   S={...S,...n,at:performance.now()};
@@ -233,7 +232,11 @@ function frame(){
     const ps=$('lyrics').children;
     if(i!==frame.i){frame.i=i;for(const e of ps){e.classList.remove('on','prev','next');e.style.removeProperty('--lp')}
       if(ps[i-1])ps[i-1].classList.add('prev'); if(ps[i+1])ps[i+1].classList.add('next');
-      const el=ps[i];if(el){el.classList.add('on');if(performance.now()>userScrollUntil)$('lyrics').scrollTop=el.offsetTop-$('lyrics').clientHeight*0.32}}
+      const el=ps[i];if(el){el.classList.add('on');
+        if(performance.now()>userScrollUntil){const box=$('lyrics'),h=box.clientHeight,rel=el.offsetTop-box.scrollTop,mid=h/2-el.clientHeight/2;
+          if(rel<0||rel>h-el.clientHeight) box.scrollTop=el.offsetTop-h*0.3;   // jumped far (seek): reposition
+          else if(rel>mid) box.scrollTop=el.offsetTop-mid;                    // past halfway: move one line
+        }}}
     const cur=ps[i]; if(cur){const a=lyricLines[i].t,b=lyricLines[i+1]?Math.min(lyricLines[i+1].t,a+7000):a+4000;const pr=Math.max(0,Math.min(1,(p+lyricOff-a)/(b-a)));cur.style.setProperty('--lp',(pr*100).toFixed(1)+'%')}}
   // ring of bars
   const w=cv.width=cv.clientWidth*devicePixelRatio,h=cv.height=cv.clientHeight*devicePixelRatio;cx.clearRect(0,0,w,h);
@@ -251,10 +254,6 @@ function frame(){
 }
 
 /* ---------- Lyrics timing + interaction ---------- */
-const showOff=()=>$('lo').textContent=(lyricOff>=0?'+':'')+(lyricOff/1000).toFixed(2)+'s';
-showOff();
-$('lE').onclick=()=>{lyricOff+=250;store.set('lyroff2',lyricOff);showOff()};
-$('lL').onclick=()=>{lyricOff-=250;store.set('lyroff2',lyricOff);showOff()};
 ['touchstart','wheel','pointerdown'].forEach(ev=>$('lyrics').addEventListener(ev,()=>{userScrollUntil=performance.now()+5000},{passive:true}));
 $('lyrics').addEventListener('click',e=>{const el=e.target.closest('p[data-i]');if(!el)return;const l=lyricLines[+el.dataset.i];if(l){applyState({pos:l.t,paused:false});cmd('/me/player/seek?position_ms='+Math.round(l.t))}});
 
@@ -292,8 +291,7 @@ async function poll(){
     const t0=performance.now();
     const r=await api('/me/player');
     $('lat').textContent=Math.round(performance.now()-t0)+' ms';
-    if(!r||r.error||!r.item){ if(!S.track) say('No song is playing. Start one in the Spotify app, then wait a few seconds.'); return; }
-    if(!dragging&&$('msg').textContent.indexOf('No song')===0) say('');
+    if(!r||r.error||!r.item){ return; }
     if(performance.now()<holdUntil) return;
     let pos=r.progress_ms+(r.is_playing?(performance.now()-t0)/2:0);
     if(S.track&&S.track.id===r.item.id&&S.paused===!r.is_playing&&Math.abs(pos-nowPos())<700) pos=nowPos();
