@@ -103,22 +103,25 @@ async function login(){
   if(NATIVE&&Capacitor.Plugins.Browser) Capacitor.Plugins.Browser.open({url}); else location.href=url;
 }
 async function nfetch(url,o){
-  const h=o.headers||{}; let data;
-  if(o.body){ try{data=JSON.parse(o.body)}catch{data=o.body} }
+  const h=o.headers||{}; let data; const ct=String(h['Content-Type']||h['content-type']||'');
+  if(o.body){ const b=String(o.body);
+    if(ct.includes('x-www-form-urlencoded')) data=Object.fromEntries(new URLSearchParams(b));
+    else { try{data=JSON.parse(b)}catch{data=b} } }
   const res=await Capacitor.Plugins.CapacitorHttp.request({url,method:o.method||'GET',headers:h,data,responseType:'text',connectTimeout:8000,readTimeout:8000});
   const txt=typeof res.data==='string'?res.data:JSON.stringify(res.data??'');
   return {ok:res.status>=200&&res.status<300,status:res.status,text:async()=>txt,json:async()=>JSON.parse(txt)};
 }
+const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timed out')),ms))]);
 async function rfetch(url,opts,tries=5){
   const useNative=opts&&opts.native&&NATIVE&&Capacitor.Plugins.CapacitorHttp;
   if(opts&&opts.native){opts={...opts};delete opts.native}
   for(let i=0;;i++){
-    try{ return useNative?await nfetch(url,opts):await fetch(url,opts) }
+    try{ return await withTimeout(useNative?nfetch(url,opts):fetch(url,opts),12000) }
     catch(e){ if(i>=tries-1) throw new Error('No connection to Spotify ('+(e.message||e)+'). Check your internet and try again.'); $('lmsg').textContent='Connecting to Spotify… (try '+(i+2)+')'; await new Promise(r=>setTimeout(r,1200)) }
   }
 }
 async function tokenReq(params){
-  const r=await rfetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:store.get('cid'),...params})});
+  const r=await rfetch('https://accounts.spotify.com/api/token',{native:true,method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:store.get('cid'),...params})});
   const j=await r.json(); if(!j.access_token) throw new Error(j.error_description||'Login failed');
   store.set('access',j.access_token); if(j.refresh_token) store.set('refresh',j.refresh_token);
   store.set('exp',Date.now()+j.expires_in*1000-60000); return j.access_token;
@@ -320,17 +323,21 @@ function startApp(){
   poll(); setInterval(poll,2000); requestAnimationFrame(frame);
 }
 if(NATIVE&&Capacitor.Plugins.App){
+  let exchanging=false;
   Capacitor.Plugins.App.addListener('appUrlOpen',async ev=>{
+    if(exchanging) return; exchanging=true;
     try{
       const u=new URL(ev.url.replace('beatplayer://','https://cb.invalid/'));
       $('lmsg').textContent='Finishing login…';
       await new Promise(r=>setTimeout(r,1200));
       const code=u.searchParams.get('code');
       if(!code){ $('lmsg').textContent='Spotify said: '+(u.searchParams.get('error')||'login cancelled'); return; }
+      $('lmsg').textContent='Getting your Spotify access…';
       await tokenReq({grant_type:'authorization_code',code,redirect_uri:REDIRECT,code_verifier:store.get('verifier')});
       try{Capacitor.Plugins.Browser.close()}catch{}
       startApp();
-    }catch(e){ $('lmsg').textContent=e.message }
+    }catch(e){ $('lmsg').textContent='Login failed: '+e.message+' — tap Connect to try again.' }
+    exchanging=false;
   });
 }
 async function boot(){
