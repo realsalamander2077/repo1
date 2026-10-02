@@ -25,7 +25,8 @@ canvas#viz{position:absolute;inset:-14%;width:128%;height:128%;pointer-events:no
 .side{display:flex;flex-direction:column;gap:14px;min-width:0}
 .title{font-size:26px;font-weight:800;letter-spacing:-.5px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .artist{color:var(--dim);margin:0}
-#lyrics{height:170px;overflow-y:auto;scroll-behavior:smooth;mask-image:linear-gradient(transparent,#000 25%,#000 75%,transparent);padding:60px 0;text-align:left}
+#lyrics{height:min(38vh,300px);overflow-y:auto;scroll-behavior:smooth;mask-image:linear-gradient(transparent,#000 18%,#000 82%,transparent);padding:110px 0;text-align:left;overscroll-behavior:contain}
+#lyrics p[data-i]{cursor:pointer}
 #lyrics p{margin:0 0 10px;font-size:20px;font-weight:600;color:#fff5;transition:color .25s,transform .25s;transform-origin:left}
 #lyrics p.on{color:var(--fg);transform:scale(1.06)}
 #lyrics.plain p{font-size:15px;color:var(--dim)}
@@ -75,6 +76,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
       <span>Volume</span><input type="range" id="vol" min="0" max="100" value="60" style="max-width:140px" aria-label="Volume">
       <button id="like" aria-label="Save to Liked Songs">♡ Like</button>
       <button id="tap" title="Tap along if the pulse is off">Tap tempo</button>
+      <span>Lyrics</span><button id="lE">Earlier</button><span id="lo"></span><button id="lL">Later</button>
       <span id="bpm"></span>
     </div>
     <div id="msg"></div>
@@ -135,6 +137,7 @@ async function api(path,method='GET',body){
 $('go').onclick=login; $('cid').value=store.get('cid')||'';
 
 /* ---------- State ---------- */
+let lyricOff=store.get('lyroff')!==null?+store.get('lyroff'):350,userScrollUntil=0;
 let S={track:null,pos:0,at:0,dur:1,paused:true,shuffle:false,repeat:0};
 let deviceId=null,player=null,lyricLines=[],plain=false,lastTrackId=null,beats=null,bpm=null,dragging=false;
 const fmt=ms=>{ms=Math.max(0,ms|0);const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
@@ -153,6 +156,7 @@ function applyState(n){
 
 /* ---------- Track change: cover, colours, lyrics, beat data ---------- */
 function onTrack(tr){
+  frame.i=-1; userScrollUntil=0;
   $('t').textContent=tr.name; $('a').textContent=tr.artists.map(a=>a.name).join(', ');
   const img=tr.album.images[0]?.url||''; $('art').src=img;
   document.title=tr.name+' · Beatplayer';
@@ -220,8 +224,8 @@ function frame(){
   // seek bar + time
   if(!dragging){ $('seek').value=S.dur?p/S.dur*1000:0; $('seek').style.setProperty('--p',(p/S.dur*100)+'%'); $('cur').textContent=fmt(p); }
   // lyrics
-  if(lyricLines.length){let i=0;while(i+1<lyricLines.length&&lyricLines[i+1].t<=p+150)i++;
-    if(i!==frame.i){frame.i=i;const ps=$('lyrics').children;for(const e of ps)e.classList.remove('on');const el=ps[i];if(el){el.classList.add('on');$('lyrics').scrollTop=el.offsetTop-$('lyrics').clientHeight/2+el.clientHeight/2}}}
+  if(lyricLines.length){let i=-1;while(i+1<lyricLines.length&&lyricLines[i+1].t<=p+lyricOff)i++;if(i<0)i=0;
+    if(i!==frame.i){frame.i=i;const ps=$('lyrics').children;for(const e of ps)e.classList.remove('on');const el=ps[i];if(el){el.classList.add('on');if(performance.now()>userScrollUntil)$('lyrics').scrollTop=el.offsetTop-$('lyrics').clientHeight/2+el.clientHeight/2}}}
   // ring of bars
   const w=cv.width=cv.clientWidth*devicePixelRatio,h=cv.height=cv.clientHeight*devicePixelRatio;cx.clearRect(0,0,w,h);
   const R=w/2/1.28*.78*1.0, N=seed.length, col=getComputedStyle(document.documentElement).getPropertyValue('--c1');
@@ -236,6 +240,14 @@ function frame(){
   cx.setTransform(1,0,0,1,0,0);
   requestAnimationFrame(frame);
 }
+
+/* ---------- Lyrics timing + interaction ---------- */
+const showOff=()=>$('lo').textContent=(lyricOff>=0?'+':'')+(lyricOff/1000).toFixed(2)+'s';
+showOff();
+$('lE').onclick=()=>{lyricOff+=250;store.set('lyroff',lyricOff);showOff()};
+$('lL').onclick=()=>{lyricOff-=250;store.set('lyroff',lyricOff);showOff()};
+['touchstart','wheel','pointerdown'].forEach(ev=>$('lyrics').addEventListener(ev,()=>{userScrollUntil=performance.now()+5000},{passive:true}));
+$('lyrics').addEventListener('click',e=>{const el=e.target.closest('p[data-i]');if(!el)return;const l=lyricLines[+el.dataset.i];if(l){S.pos=l.t;S.at=performance.now();cmd('/me/player/seek?position_ms='+Math.round(l.t))}});
 
 /* ---------- Controls ---------- */
 async function cmd(path,method='PUT'){ const r=await api(path+(path.includes('?')?'&':'?')+(deviceId?'device_id='+deviceId:''),method); if(r&&r.error) say('No active Spotify device. Tap play or open Spotify somewhere first.'); setTimeout(poll,350); }
@@ -257,9 +269,12 @@ document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(
 /* ---------- Sync with whatever Spotify is playing ---------- */
 async function poll(){
   try{
+    const t0=performance.now();
     const r=await api('/me/player');
     if(!r||r.error||!r.item){ return; }
-    applyState({track:r.item,pos:r.progress_ms,dur:r.item.duration_ms,paused:!r.is_playing,shuffle:r.shuffle_state,repeat:['off','context','track'].indexOf(r.repeat_state)});
+    let pos=r.progress_ms+(r.is_playing?(performance.now()-t0)/2:0);
+    if(S.track&&S.track.id===r.item.id&&S.paused===!r.is_playing&&Math.abs(pos-nowPos())<700) pos=nowPos();
+    applyState({track:r.item,pos,dur:r.item.duration_ms,paused:!r.is_playing,shuffle:r.shuffle_state,repeat:['off','context','track'].indexOf(r.repeat_state)});
     if(r.device&&!dragging&&document.activeElement!==$('vol')) $('vol').value=r.device.volume_percent??60;
   }catch(e){say(e.message)}
 }
@@ -282,7 +297,7 @@ function startApp(){
   if(started) return; started=true;
   $('login').style.display='none';$('app').style.display='grid';
   if(NATIVE) say('Remote mode: start a song in the Spotify app and it shows up here.'); else startPlayer();
-  poll(); setInterval(poll,4000); requestAnimationFrame(frame);
+  poll(); setInterval(poll,3000); requestAnimationFrame(frame);
 }
 if(NATIVE&&Capacitor.Plugins.App){
   Capacitor.Plugins.App.addListener('appUrlOpen',async ev=>{
