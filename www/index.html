@@ -77,7 +77,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
       <button id="like" aria-label="Save to Liked Songs">♡ Like</button>
       <button id="tap" title="Tap along if the pulse is off">Tap tempo</button>
       <span>Lyrics</span><button id="lE">Earlier</button><span id="lo"></span><button id="lL">Later</button>
-      <span id="bpm"></span>
+      <span id="bpm"></span><span id="lat" style="opacity:.6"></span>
     </div>
     <div id="msg"></div>
   </div>
@@ -105,16 +105,16 @@ async function login(){
 async function nfetch(url,o){
   const h=o.headers||{}; let data;
   if(o.body){ try{data=JSON.parse(o.body)}catch{data=o.body} }
-  const res=await Capacitor.Plugins.CapacitorHttp.request({url,method:o.method||'GET',headers:h,data,responseType:'text'});
+  const res=await Capacitor.Plugins.CapacitorHttp.request({url,method:o.method||'GET',headers:h,data,responseType:'text',connectTimeout:8000,readTimeout:8000});
   const txt=typeof res.data==='string'?res.data:JSON.stringify(res.data??'');
   return {ok:res.status>=200&&res.status<300,status:res.status,text:async()=>txt,json:async()=>JSON.parse(txt)};
 }
-async function rfetch(url,opts,tries=8){
+async function rfetch(url,opts,tries=5){
   const useNative=opts&&opts.native&&NATIVE&&Capacitor.Plugins.CapacitorHttp;
   if(opts&&opts.native){opts={...opts};delete opts.native}
   for(let i=0;;i++){
     try{ return useNative?await nfetch(url,opts):await fetch(url,opts) }
-    catch(e){ if(i>=tries-1) throw new Error('No connection to Spotify ('+(e.message||e)+'). Check your internet and try again.'); await new Promise(r=>setTimeout(r,1500)) }
+    catch(e){ if(i>=tries-1) throw new Error('No connection to Spotify ('+(e.message||e)+'). Check your internet and try again.'); $('lmsg').textContent='Connecting to Spotify… (try '+(i+2)+')'; await new Promise(r=>setTimeout(r,1200)) }
   }
 }
 async function tokenReq(params){
@@ -276,17 +276,22 @@ $('like').onclick=async()=>{ if(!S.track)return; const liked=$('like').textConte
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.code==='Space'){e.preventDefault();$('play').click()}if(e.key==='ArrowRight')$('next').click();if(e.key==='ArrowLeft')$('prev').click()});
 
 /* ---------- Sync with whatever Spotify is playing ---------- */
+let polling=false;
 async function poll(){
+  if(polling) return; polling=true;
   try{
     const t0=performance.now();
     const r=await api('/me/player');
-    if(!r||r.error||!r.item){ return; }
+    $('lat').textContent=Math.round(performance.now()-t0)+' ms';
+    if(!r||r.error||!r.item){ if(!S.track) say('No song is playing. Start one in the Spotify app, then wait a few seconds.'); return; }
+    if(!dragging&&$('msg').textContent.indexOf('No song')===0) say('');
     if(performance.now()<holdUntil) return;
     let pos=r.progress_ms+(r.is_playing?(performance.now()-t0)/2:0);
     if(S.track&&S.track.id===r.item.id&&S.paused===!r.is_playing&&Math.abs(pos-nowPos())<700) pos=nowPos();
     applyState({track:r.item,pos,dur:r.item.duration_ms,paused:!r.is_playing,shuffle:r.shuffle_state,repeat:['off','context','track'].indexOf(r.repeat_state)});
     if(!NATIVE&&r.device&&!dragging&&document.activeElement!==$('vol')) $('vol').value=r.device.volume_percent??60;
   }catch(e){say(e.message)}
+  finally{polling=false}
 }
 
 /* phone volume stays in sync with the hardware buttons */
