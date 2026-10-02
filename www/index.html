@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beatplayer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#100d14;--fg:#f4effc;--dim:#a79fb8;--c1:#ff5d8f;--c2:#7a5cff;--beat:0;box-sizing:border-box}
+*{box-sizing:inherit}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font-family:'Bricolage Grotesque',system-ui,sans-serif}
+body{background:radial-gradient(120% 80% at 50% 0%,color-mix(in srgb,var(--c1) 35%,transparent),transparent 60%),radial-gradient(90% 60% at 100% 100%,color-mix(in srgb,var(--c2) 30%,transparent),transparent 60%),var(--bg);transition:background 1s}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--fg);outline-offset:3px}
+#login{display:grid;place-content:center;gap:16px;min-height:100vh;padding:24px;max-width:420px;margin:auto}
+#login h1{font-size:44px;margin:0;font-weight:800;letter-spacing:-1px}
+#login p{color:var(--dim);margin:0;line-height:1.5}
+#login input{padding:14px;border-radius:12px;border:1px solid #fff3;background:#ffffff12;color:var(--fg);font:inherit}
+.btn{padding:14px 20px;border-radius:999px;background:var(--fg);color:#100d14;font-weight:800}
+code{background:#ffffff18;padding:2px 6px;border-radius:6px;word-break:break-all}
+#app{display:none;max-width:980px;margin:auto;padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));min-height:100vh;grid-template-columns:1fr;gap:20px}
+@media(min-width:800px){#app{grid-template-columns:420px 1fr;align-items:center}}
+.stage{position:relative;aspect-ratio:1;width:100%;max-width:420px;margin:auto}
+canvas#viz{position:absolute;inset:-14%;width:128%;height:128%;pointer-events:none}
+#art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:18px;background:#ffffff14;transform:scale(calc(1 + var(--beat)*.045));box-shadow:0 0 calc(30px + var(--beat)*60px) calc(var(--beat)*8px) color-mix(in srgb,var(--c1) 70%,transparent);transition:box-shadow .05s}
+.side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.title{font-size:26px;font-weight:800;letter-spacing:-.5px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.artist{color:var(--dim);margin:0}
+#lyrics{height:170px;overflow-y:auto;scroll-behavior:smooth;mask-image:linear-gradient(transparent,#000 25%,#000 75%,transparent);padding:60px 0;text-align:left}
+#lyrics p{margin:0 0 10px;font-size:20px;font-weight:600;color:#fff5;transition:color .25s,transform .25s;transform-origin:left}
+#lyrics p.on{color:var(--fg);transform:scale(1.06)}
+#lyrics.plain p{font-size:15px;color:var(--dim)}
+.bar{display:flex;align-items:center;gap:10px;font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim)}
+input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:9px;background:linear-gradient(90deg,var(--c1) var(--p,0%),#ffffff26 var(--p,0%));outline-offset:6px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--fg)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:var(--fg)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.row button{padding:10px;border-radius:50%;display:grid;place-items:center;opacity:.8}
+.row button.active{color:var(--c1);opacity:1}
+.row button svg{width:26px;height:26px;fill:currentColor}
+#play{background:var(--fg);color:#100d14;width:64px;height:64px;opacity:1}
+#play svg{width:30px;height:30px}
+.small{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim);flex-wrap:wrap}
+.small button{padding:8px 14px;border:1px solid #fff3;border-radius:999px;color:var(--fg)}
+#msg{font-size:13px;color:var(--dim);min-height:18px}
+@media(prefers-reduced-motion:reduce){#art{transform:none}}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h1>Beatplayer</h1>
+  <p>Your Spotify, with lyrics and a cover that pulses with the beat. Needs Spotify Premium to play music in this tab.</p>
+  <input id="cid" placeholder="Paste your Spotify Client ID" autocomplete="off">
+  <p style="font-size:13px">Make one free at developer.spotify.com/dashboard → Create app → add this Redirect URI: <code id="ruri"></code> and tick "Web Playback SDK".</p>
+  <button class="btn" id="go">Connect Spotify</button>
+  <p id="lmsg" style="color:#ff8aa8"></p>
+</div>
+
+<div id="app">
+  <div class="stage"><canvas id="viz"></canvas><img id="art" alt="Album cover" crossorigin="anonymous"></div>
+  <div class="side">
+    <div><h2 class="title" id="t">Nothing playing</h2><p class="artist" id="a">Start a song in Spotify or tap play</p></div>
+    <div id="lyrics"></div>
+    <div class="bar"><span id="cur">0:00</span><input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek"><span id="dur">0:00</span></div>
+    <div class="row">
+      <button id="shuf" aria-label="Shuffle"><svg viewBox="0 0 24 24"><path d="M17 3l4 4-4 4V8h-2.6l-3.1 4.4L8.9 9H4V7h5.9l1.4 2 2.1-3H17V3zM4 15h4.9l1.4 2 .5-.7 1.4 2L11.9 20H4v-2h6.9l-2-2.8L4 15zm10.4-.4L17 15v-3l4 4-4 4v-3h-2.6l-1.6-2.4 1.6-.6z"/></svg></button>
+      <button id="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12L18 18V6z"/></svg></button>
+      <button id="play" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path id="pp" d="M8 5v14l11-7z"/></svg></button>
+      <button id="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+      <button id="rep" aria-label="Repeat"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
+    </div>
+    <div class="small">
+      <span>Volume</span><input type="range" id="vol" min="0" max="100" value="60" style="max-width:140px" aria-label="Volume">
+      <button id="like" aria-label="Save to Liked Songs">♡ Like</button>
+      <button id="tap" title="Tap along if the pulse is off">Tap tempo</button>
+      <span id="bpm"></span>
+    </div>
+    <div id="msg"></div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const REDIRECT=location.origin+location.pathname;
+$('ruri').textContent=REDIRECT;
+const SCOPES='streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state user-read-currently-playing user-library-read user-library-modify';
+const store={get:k=>{try{return localStorage.getItem(k)}catch{return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch{}},del:k=>{try{localStorage.removeItem(k)}catch{}}};
+
+/* ---------- Auth (PKCE, no server needed) ---------- */
+const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function login(){
+  const cid=$('cid').value.trim(); if(!cid){$('lmsg').textContent='Paste your Client ID first.';return}
+  store.set('cid',cid);
+  const verifier=b64(crypto.getRandomValues(new Uint8Array(48)));
+  store.set('verifier',verifier);
+  const challenge=b64(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier)));
+  location.href='https://accounts.spotify.com/authorize?'+new URLSearchParams({client_id:cid,response_type:'code',redirect_uri:REDIRECT,scope:SCOPES,code_challenge_method:'S256',code_challenge:challenge});
+}
+async function tokenReq(params){
+  const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:store.get('cid'),...params})});
+  const j=await r.json(); if(!j.access_token) throw new Error(j.error_description||'Login failed');
+  store.set('access',j.access_token); if(j.refresh_token) store.set('refresh',j.refresh_token);
+  store.set('exp',Date.now()+j.expires_in*1000-60000); return j.access_token;
+}
+async function getToken(){
+  if(Date.now()<+store.get('exp')) return store.get('access');
+  return tokenReq({grant_type:'refresh_token',refresh_token:store.get('refresh')});
+}
+async function api(path,method='GET',body){
+  const t=await getToken();
+  const r=await fetch('https://api.spotify.com/v1'+path,{method,headers:{Authorization:'Bearer '+t,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+  if(r.status===204||r.status===202) return null;
+  if(!r.ok){ if(r.status===404||r.status===403) return {error:r.status}; throw new Error('Spotify error '+r.status); }
+  const txt=await r.text(); return txt?JSON.parse(txt):null;
+}
+$('go').onclick=login; $('cid').value=store.get('cid')||'';
+
+/* ---------- State ---------- */
+let S={track:null,pos:0,at:0,dur:1,paused:true,shuffle:false,repeat:0};
+let deviceId=null,player=null,lyricLines=[],plain=false,lastTrackId=null,beats=null,bpm=null,dragging=false;
+const fmt=ms=>{ms=Math.max(0,ms|0);const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+const nowPos=()=>S.paused?S.pos:Math.min(S.dur,S.pos+(performance.now()-S.at));
+const say=m=>$('msg').textContent=m||'';
+
+function applyState(n){
+  S={...S,...n,at:performance.now()};
+  const tr=S.track; if(!tr) return;
+  if(tr.id!==lastTrackId){ lastTrackId=tr.id; onTrack(tr); }
+  $('pp').setAttribute('d',S.paused?'M8 5v14l11-7z':'M7 5h4v14H7zM13 5h4v14h-4z');
+  $('shuf').classList.toggle('active',S.shuffle);
+  $('rep').classList.toggle('active',S.repeat>0);
+  $('rep').style.opacity=S.repeat===2?1:'';
+}
+
+/* ---------- Track change: cover, colours, lyrics, beat data ---------- */
+function onTrack(tr){
+  $('t').textContent=tr.name; $('a').textContent=tr.artists.map(a=>a.name).join(', ');
+  const img=tr.album.images[0]?.url||''; $('art').src=img;
+  document.title=tr.name+' · Beatplayer';
+  $('dur').textContent=fmt(S.dur);
+  $('like').textContent='♡ Like';
+  api('/me/tracks/contains?ids='+tr.id).then(r=>{if(Array.isArray(r)&&r[0]) $('like').textContent='♥ Liked'}).catch(()=>{});
+  loadLyrics(tr); loadBeats(tr);
+}
+$('art').addEventListener('load',()=>{
+  try{
+    const c=document.createElement('canvas');c.width=c.height=24;const x=c.getContext('2d');x.drawImage($('art'),0,0,24,24);
+    const d=x.getImageData(0,0,24,24).data;let best=[],sc=-1,avg=[0,0,0];
+    for(let i=0;i<d.length;i+=4){const[r,g,b]=[d[i],d[i+1],d[i+2]];const m=Math.max(r,g,b),n=Math.min(r,g,b);const s=(m-n)*(m>60?1:.2);avg[0]+=r;avg[1]+=g;avg[2]+=b;if(s>sc){sc=s;best=[r,g,b]}}
+    const a=avg.map(v=>v/(d.length/4)); const bright=v=>v.map(q=>Math.min(255,q*1.15+20)|0);
+    document.documentElement.style.setProperty('--c1',`rgb(${bright(best)})`);
+    document.documentElement.style.setProperty('--c2',`rgb(${a.map(v=>v|0)})`);
+  }catch{}
+});
+
+async function loadLyrics(tr){
+  const box=$('lyrics'); box.className=''; box.innerHTML='<p>Looking for lyrics…</p>'; lyricLines=[]; plain=false;
+  try{
+    const q=new URLSearchParams({track_name:tr.name,artist_name:tr.artists[0].name,album_name:tr.album.name,duration:Math.round(tr.duration_ms/1000)});
+    let r=await fetch('https://lrclib.net/api/get?'+q); 
+    if(!r.ok){ r=await fetch('https://lrclib.net/api/search?'+new URLSearchParams({track_name:tr.name,artist_name:tr.artists[0].name})); }
+    let j=await r.json(); if(Array.isArray(j)) j=j.find(x=>x.syncedLyrics)||j[0];
+    if(tr.id!==lastTrackId) return;
+    if(j&&j.syncedLyrics){
+      lyricLines=j.syncedLyrics.split('\n').map(l=>{const m=l.match(/^\[(\d+):(\d+\.?\d*)\]\s*(.*)$/);return m?{t:(+m[1]*60+ +m[2])*1000,s:m[3]||'♪'}:null}).filter(Boolean);
+      box.innerHTML=lyricLines.map((l,i)=>`<p data-i="${i}">${l.s.replace(/</g,'&lt;')}</p>`).join('');
+    }else if(j&&j.plainLyrics){
+      plain=true;box.className='plain';box.innerHTML=j.plainLyrics.split('\n').map(l=>`<p>${l.replace(/</g,'&lt;')||'&nbsp;'}</p>`).join('');
+    }else box.innerHTML='<p>No lyrics found for this song.</p>';
+  }catch{ box.innerHTML='<p>Lyrics could not be loaded.</p>'; }
+}
+
+/* Beat data: Spotify's audio-analysis is blocked for newer apps, so we try it
+   and fall back to tempo (saved or tapped) with a steady pulse. */
+async function loadBeats(tr){
+  beats=null; bpm=+store.get('bpm:'+tr.id)||null; $('bpm').textContent=bpm?Math.round(bpm)+' BPM':'';
+  const r=await api('/audio-analysis/'+tr.id).catch(()=>null);
+  if(tr.id!==lastTrackId) return;
+  if(r&&r.beats){beats=r.beats.map(b=>b.start*1000);$('bpm').textContent=Math.round(r.track.tempo)+' BPM'; if(!bpm) bpm=r.track.tempo;}
+  else if(!bpm){bpm=120;$('bpm').textContent='~120 BPM (tap to fix)';}
+}
+let taps=[];
+$('tap').onclick=()=>{
+  const n=performance.now(); if(taps.length&&n-taps[taps.length-1]>2000) taps=[]; taps.push(n);
+  if(taps.length>=3){const iv=[];for(let i=1;i<taps.length;i++)iv.push(taps[i]-taps[i-1]);bpm=60000/(iv.reduce((a,b)=>a+b)/iv.length);beats=null;
+    S.tapPhase=nowPos(); store.set('bpm:'+lastTrackId,bpm); store.set('ph:'+lastTrackId,S.tapPhase); $('bpm').textContent=Math.round(bpm)+' BPM'}
+};
+
+/* ---------- Beat pulse + visualizer ---------- */
+const cv=$('viz'),cx=cv.getContext('2d');let seed=[...Array(72)].map(()=>Math.random());
+function beatValue(p){
+  if(beats&&beats.length){let lo=0,hi=beats.length-1;while(lo<hi){const m=(lo+hi+1)>>1;if(beats[m]<=p)lo=m;else hi=m-1}
+    const next=beats[lo+1]??beats[lo]+500;const len=Math.max(200,next-beats[lo]);return Math.exp(-((p-beats[lo])/len)*4.5)}
+  if(!bpm) return 0; const per=60000/bpm; const off=+store.get('ph:'+lastTrackId)||0;
+  const ph=(((p-off)%per)+per)%per/per; return Math.exp(-ph*4.5);
+}
+let smooth=0;
+function frame(){
+  const p=nowPos(); const b=S.paused?0:beatValue(p);
+  smooth=Math.max(b,smooth*.86); document.documentElement.style.setProperty('--beat',smooth.toFixed(3));
+  // seek bar + time
+  if(!dragging){ $('seek').value=S.dur?p/S.dur*1000:0; $('seek').style.setProperty('--p',(p/S.dur*100)+'%'); $('cur').textContent=fmt(p); }
+  // lyrics
+  if(lyricLines.length){let i=0;while(i+1<lyricLines.length&&lyricLines[i+1].t<=p+150)i++;
+    if(i!==frame.i){frame.i=i;const ps=$('lyrics').children;for(const e of ps)e.classList.remove('on');const el=ps[i];if(el){el.classList.add('on');$('lyrics').scrollTop=el.offsetTop-$('lyrics').clientHeight/2+el.clientHeight/2}}}
+  // ring of bars
+  const w=cv.width=cv.clientWidth*devicePixelRatio,h=cv.height=cv.clientHeight*devicePixelRatio;cx.clearRect(0,0,w,h);
+  const R=w/2/1.28*.78*1.0, N=seed.length, col=getComputedStyle(document.documentElement).getPropertyValue('--c1');
+  cx.translate(w/2,h/2);cx.lineCap='round';cx.strokeStyle=col;cx.lineWidth=w*.008;
+  const t=p/1000;
+  for(let i=0;i<N;i++){
+    const a=i/N*Math.PI*2-Math.PI/2; const wob=.5+.5*Math.sin(t*3+seed[i]*20);
+    const len=w*(.012+.07*smooth*(.35+.65*wob)*(.5+seed[i])*(S.paused?0:1));
+    const r0=R*1.12*1.06; cx.globalAlpha=.35+.65*smooth;
+    cx.beginPath();cx.moveTo(Math.cos(a)*r0,Math.sin(a)*r0);cx.lineTo(Math.cos(a)*(r0+len),Math.sin(a)*(r0+len));cx.stroke();
+  }
+  cx.setTransform(1,0,0,1,0,0);
+  requestAnimationFrame(frame);
+}
+
+/* ---------- Controls ---------- */
+async function cmd(path,method='PUT'){ const r=await api(path+(path.includes('?')?'&':'?')+(deviceId?'device_id='+deviceId:''),method); if(r&&r.error) say('No active Spotify device. Tap play or open Spotify somewhere first.'); setTimeout(poll,350); }
+$('play').onclick=async()=>{
+  if(player&&deviceId&&!S.track){await api('/me/player','PUT',{device_ids:[deviceId],play:true});return}
+  S.paused?cmd('/me/player/play'):cmd('/me/player/pause');
+};
+$('next').onclick=()=>cmd('/me/player/next','POST');
+$('prev').onclick=()=>nowPos()>3000?cmd('/me/player/seek?position_ms=0'):cmd('/me/player/previous','POST');
+$('shuf').onclick=()=>cmd('/me/player/shuffle?state='+!S.shuffle);
+$('rep').onclick=()=>cmd('/me/player/repeat?state='+['context','track','off'][S.repeat]);
+$('vol').oninput=e=>{clearTimeout($('vol').t);$('vol').style.setProperty('--p',e.target.value+'%');$('vol').t=setTimeout(()=>cmd('/me/player/volume?volume_percent='+e.target.value),150)};
+$('seek').addEventListener('input',e=>{dragging=true;const ms=e.target.value/1000*S.dur;$('cur').textContent=fmt(ms);e.target.style.setProperty('--p',e.target.value/10+'%')});
+$('seek').addEventListener('change',e=>{const ms=Math.round(e.target.value/1000*S.dur);S.pos=ms;S.at=performance.now();dragging=false;cmd('/me/player/seek?position_ms='+ms)});
+$('like').onclick=async()=>{ if(!S.track)return; const liked=$('like').textContent.includes('♥');
+  await api('/me/tracks?ids='+S.track.id,liked?'DELETE':'PUT'); $('like').textContent=liked?'♡ Like':'♥ Liked'};
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.code==='Space'){e.preventDefault();$('play').click()}if(e.key==='ArrowRight')$('next').click();if(e.key==='ArrowLeft')$('prev').click()});
+
+/* ---------- Sync with whatever Spotify is playing ---------- */
+async function poll(){
+  try{
+    const r=await api('/me/player');
+    if(!r||r.error||!r.item){ return; }
+    applyState({track:r.item,pos:r.progress_ms,dur:r.item.duration_ms,paused:!r.is_playing,shuffle:r.shuffle_state,repeat:['off','context','track'].indexOf(r.repeat_state)});
+    if(r.device&&!dragging&&document.activeElement!==$('vol')) $('vol').value=r.device.volume_percent??60;
+  }catch(e){say(e.message)}
+}
+
+/* ---------- Boot ---------- */
+function startPlayer(){
+  window.onSpotifyWebPlaybackSDKReady=()=>{
+    player=new Spotify.Player({name:'Beatplayer',getOAuthToken:cb=>getToken().then(cb),volume:.6});
+    player.addListener('ready',({device_id})=>{deviceId=device_id;say('Ready. Pick "Beatplayer" in Spotify or tap play here.')});
+    player.addListener('player_state_changed',s=>{ if(!s)return; const t=s.track_window.current_track;
+      applyState({track:t,pos:s.position,dur:s.duration,paused:s.paused,shuffle:s.shuffle,repeat:s.repeat_mode}) });
+    player.addListener('account_error',()=>say('Spotify Premium is needed to play here. You can still control another device.'));
+    player.addListener('authentication_error',()=>say('Login expired. Reload to reconnect.'));
+    player.connect();
+  };
+  const s=document.createElement('script');s.src='https://sdk.scdn.co/spotify-player.js';document.body.appendChild(s);
+}
+async function boot(){
+  const code=new URLSearchParams(location.search).get('code');
+  try{
+    if(code){ await tokenReq({grant_type:'authorization_code',code,redirect_uri:REDIRECT,code_verifier:store.get('verifier')}); history.replaceState({},'',REDIRECT); }
+    if(!store.get('refresh')) return;
+    $('login').style.display='none';$('app').style.display='grid';
+    startPlayer(); poll(); setInterval(poll,4000); requestAnimationFrame(frame);
+  }catch(e){ $('lmsg').textContent=e.message; history.replaceState({},'',REDIRECT); }
+}
+boot();
+</script>
+</body>
+</html>

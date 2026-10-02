@@ -1,0 +1,9 @@
+{
+  "appId": "com.beatplayer.app",
+  "appName": "Beatplayer",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": ["accounts.spotify.com", "*.spotify.com"]
+  }
+}
