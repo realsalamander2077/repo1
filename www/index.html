@@ -30,7 +30,7 @@ canvas#viz{position:absolute;inset:-14%;width:128%;height:128%;pointer-events:no
 #lyrics p{margin:0 0 12px;font-size:20px;line-height:1.3;font-weight:700;color:#fff4;transition:color .2s;transform-origin:left}
 #lyrics p.prev{color:#fff8}
 #lyrics p.next{color:#fffb}
-#lyrics p.on{color:transparent;background:linear-gradient(90deg,var(--fg) var(--lp,0%),#fff6 var(--lp,0%));-webkit-background-clip:text;background-clip:text;font-size:24px}
+#lyrics p.on{color:transparent;background:linear-gradient(90deg,var(--fg) var(--lp,0%),#fff6 var(--lp,0%));-webkit-background-clip:text;background-clip:text}
 #lyrics.plain p{font-size:15px;color:var(--dim)}
 .bar{display:flex;align-items:center;gap:10px;font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim)}
 input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:9px;background:linear-gradient(90deg,var(--c1) var(--p,0%),#ffffff26 var(--p,0%));outline-offset:6px}
@@ -141,7 +141,7 @@ async function api(path,method='GET',body){
 $('go').onclick=login; $('cid').value=store.get('cid')||'';
 
 /* ---------- State ---------- */
-let lyricOff=-150,userScrollUntil=0;
+let scrollTarget=0,userScrolled=false,lyricOff=-150,userScrollUntil=0;
 let S={track:null,pos:0,at:0,dur:1,paused:true,shuffle:false,repeat:0};
 let deviceId=null,player=null,lyricLines=[],plain=false,lastTrackId=null,beats=null,bpm=null,dragging=false;
 const fmt=ms=>{ms=Math.max(0,ms|0);const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
@@ -160,7 +160,7 @@ function applyState(n){
 
 /* ---------- Track change: cover, colours, lyrics, beat data ---------- */
 function onTrack(tr){
-  frame.i=-1; userScrollUntil=0;
+  frame.i=-1; userScrollUntil=0; scrollTarget=0; $('lyrics').scrollTop=0;
   $('t').textContent=tr.name; $('a').textContent=tr.artists.map(a=>a.name).join(', ');
   const img=tr.album.images[0]?.url||''; $('art').src=img;
   document.title=tr.name+' · Beatplayer';
@@ -233,9 +233,12 @@ function frame(){
     if(i!==frame.i){frame.i=i;for(const e of ps){e.classList.remove('on','prev','next');e.style.removeProperty('--lp')}
       if(ps[i-1])ps[i-1].classList.add('prev'); if(ps[i+1])ps[i+1].classList.add('next');
       const el=ps[i];if(el){el.classList.add('on');
-        if(performance.now()>userScrollUntil){const box=$('lyrics'),h=box.clientHeight,rel=el.offsetTop-box.scrollTop,mid=h/2-el.clientHeight/2;
-          if(rel<0||rel>h-el.clientHeight) box.scrollTop=el.offsetTop-h*0.3;   // jumped far (seek): reposition
-          else if(rel>mid) box.scrollTop=el.offsetTop-mid;                    // past halfway: move one line
+        if(performance.now()>userScrollUntil){
+          const box=$('lyrics'),h=box.clientHeight;
+          if(userScrolled){scrollTarget=box.scrollTop;userScrolled=false}
+          const mid=h/2-el.clientHeight/2, rel=el.offsetTop-scrollTarget, desired=Math.max(0,el.offsetTop-mid);
+          // no scrolling until the current line reaches the middle; after that, one line per line
+          if(desired>scrollTarget||rel<0||rel>h-el.clientHeight){ scrollTarget=desired; box.scrollTo({top:scrollTarget,behavior:'smooth'}) }
         }}}
     const cur=ps[i]; if(cur){const a=lyricLines[i].t,b=lyricLines[i+1]?Math.min(lyricLines[i+1].t,a+7000):a+4000;const pr=Math.max(0,Math.min(1,(p+lyricOff-a)/(b-a)));cur.style.setProperty('--lp',(pr*100).toFixed(1)+'%')}}
   // ring of bars
@@ -254,7 +257,7 @@ function frame(){
 }
 
 /* ---------- Lyrics timing + interaction ---------- */
-['touchstart','wheel','pointerdown'].forEach(ev=>$('lyrics').addEventListener(ev,()=>{userScrollUntil=performance.now()+5000},{passive:true}));
+['touchstart','wheel','pointerdown'].forEach(ev=>$('lyrics').addEventListener(ev,()=>{userScrollUntil=performance.now()+5000;userScrolled=true},{passive:true}));
 $('lyrics').addEventListener('click',e=>{const el=e.target.closest('p[data-i]');if(!el)return;const l=lyricLines[+el.dataset.i];if(l){applyState({pos:l.t,paused:false});cmd('/me/player/seek?position_ms='+Math.round(l.t))}});
 
 /* ---------- Controls ---------- */
