@@ -160,6 +160,7 @@ function applyState(n){
 
 /* ---------- Track change: cover, colours, lyrics, beat data ---------- */
 function onTrack(tr){
+  try{store.set('last',JSON.stringify({track:tr,dur:tr.duration_ms}))}catch{}
   frame.i=-1; userScrollUntil=0; scrollTarget=0; $('lyrics').scrollTop=0;
   $('t').textContent=tr.name; $('a').textContent=tr.artists.map(a=>a.name).join(', ');
   const img=tr.album.images[0]?.url||''; $('art').src=img;
@@ -261,7 +262,7 @@ function frame(){
 $('lyrics').addEventListener('click',e=>{const el=e.target.closest('p[data-i]');if(!el)return;const l=lyricLines[+el.dataset.i];if(l){applyState({pos:l.t,paused:false});cmd('/me/player/seek?position_ms='+Math.round(l.t))}});
 
 /* ---------- Controls ---------- */
-let holdUntil=0,volHold=0;
+let holdUntil=0,volHold=0,inactive=false;
 async function cmd(path,method='PUT',quick=false){
   holdUntil=quick?0:performance.now()+1800;
   try{ const r=await api(path+(path.includes('?')?'&':'?')+(deviceId?'device_id='+deviceId:''),method); if(r&&r.error) say('No active Spotify device. Start a song in the Spotify app first.'); }
@@ -270,6 +271,15 @@ async function cmd(path,method='PUT',quick=false){
 }
 $('play').onclick=async()=>{
   if(player&&deviceId&&!S.track){await api('/me/player','PUT',{device_ids:[deviceId],play:true});return}
+  if(inactive&&S.track){
+    try{
+      const d=await api('/me/player/devices'); const dev=d&&d.devices&&(d.devices.find(x=>x.is_active)||d.devices[0]);
+      if(!dev){ $('a').textContent='Open the Spotify app first, then tap play.'; setTimeout(()=>{if(S.track)$('a').textContent=S.track.artists.map(a=>a.name).join(', ')},3500); return }
+      await api('/me/player/play?device_id='+dev.id,'PUT',{uris:[S.track.uri],position_ms:Math.round(nowPos())});
+      applyState({pos:nowPos(),paused:false}); inactive=false; holdUntil=performance.now()+1800; setTimeout(poll,1900);
+    }catch(e){}
+    return;
+  }
   const wasPaused=S.paused; applyState({pos:nowPos(),paused:!wasPaused});
   wasPaused?cmd('/me/player/play'):cmd('/me/player/pause');
 };
@@ -294,7 +304,8 @@ async function poll(){
     const t0=performance.now();
     const r=await api('/me/player');
     $('lat').textContent=Math.round(performance.now()-t0)+' ms';
-    if(!r||r.error||!r.item){ return; }
+    if(!r||r.error||!r.item){ inactive=true; if(S.track&&!S.paused) applyState({pos:nowPos(),paused:true}); return; }
+    inactive=false;
     if(performance.now()<holdUntil) return;
     let pos=r.progress_ms+(r.is_playing?(performance.now()-t0)/2:0);
     if(S.track&&S.track.id===r.item.id&&S.paused===!r.is_playing&&Math.abs(pos-nowPos())<700) pos=nowPos();
@@ -309,6 +320,11 @@ if(NATIVE&&Capacitor.Plugins.Volume){
   const syncVol=()=>{ if(performance.now()<volHold) return; Capacitor.Plugins.Volume.get().then(r=>{$('vol').value=r.value;$('vol').style.setProperty('--p',r.value+'%')}).catch(()=>{}) };
   syncVol(); setInterval(syncVol,1500);
 }
+/* coming back to the app: refresh straight away */
+const wake=()=>{ polling=false; poll() };
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) wake() });
+window.addEventListener('pageshow',wake);
+if(NATIVE&&Capacitor.Plugins.App) Capacitor.Plugins.App.addListener('resume',wake);
 /* ---------- Boot ---------- */
 function startPlayer(){
   window.onSpotifyWebPlaybackSDKReady=()=>{
@@ -327,6 +343,7 @@ function startApp(){
   if(started) return; started=true;
   $('login').style.display='none';$('app').style.display='grid';
   if(NATIVE) say('Remote mode: start a song in the Spotify app and it shows up here.'); else startPlayer();
+  try{const l=JSON.parse(store.get('last')||'null'); if(l&&l.track){inactive=true;applyState({track:l.track,pos:0,dur:l.dur,paused:true})}}catch{}
   poll(); setInterval(poll,2000); requestAnimationFrame(frame);
 }
 if(NATIVE&&Capacitor.Plugins.App){
